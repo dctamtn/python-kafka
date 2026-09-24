@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from kafka import KafkaConsumer
 
-from config import BOOTSTRAP_SERVERS, TOPIC_HELLO
+from config import BOOTSTRAP_SERVERS, KAFKA_API_VERSION, TOPIC_HELLO
 
 GROUP_ID = "learning-group-hello"
 
@@ -36,6 +36,7 @@ def main() -> None:
     consumer = KafkaConsumer(
         TOPIC_HELLO,
         bootstrap_servers=BOOTSTRAP_SERVERS,
+        api_version=KAFKA_API_VERSION,
         group_id=GROUP_ID,
         auto_offset_reset="earliest",
         enable_auto_commit=True,
@@ -46,7 +47,7 @@ def main() -> None:
         for msg in consumer:
             print(
                 f"READ  partition={msg.partition}  offset={msg.offset}  "
-                f"key={msg.key!r}  value={msg.value}"
+                f"key={msg.key!r}  value={msg.value} timestamp = {msg.timestamp} "
             )
     except KeyboardInterrupt:
         print("\nStopped. Committed offsets for this group are kept on the broker.")

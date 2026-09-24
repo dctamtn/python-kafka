@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from kafka import KafkaProducer
 
-from config import BOOTSTRAP_SERVERS, TOPIC_ORDERS
+from config import BOOTSTRAP_SERVERS, KAFKA_API_VERSION, TOPIC_ORDERS
 
 DISTINCT_KEYS = 4  # user-0 .. user-3
 
@@ -36,6 +36,7 @@ def main() -> None:
 
     producer = KafkaProducer(
         bootstrap_servers=BOOTSTRAP_SERVERS,
+        api_version=KAFKA_API_VERSION,
         value_serializer=lambda v: json.dumps(v).encode("utf-8"),
         key_serializer=lambda k: k.encode("utf-8") if k is not None else None,
     )

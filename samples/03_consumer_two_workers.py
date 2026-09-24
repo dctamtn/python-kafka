@@ -21,8 +21,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from kafka import KafkaConsumer
+from kafka.errors import NoBrokersAvailable
 
-from config import BOOTSTRAP_SERVERS, TOPIC_ORDERS
+from config import BOOTSTRAP_SERVERS, KAFKA_API_VERSION, TOPIC_ORDERS
 
 GROUP_ID = "learning-group-orders"
 
@@ -42,15 +43,22 @@ def main() -> None:
         "Waiting for messages ... run samples/03_producer_many_keys.py when both workers are up.\n"
     )
 
-    consumer = KafkaConsumer(
-        TOPIC_ORDERS,
-        bootstrap_servers=BOOTSTRAP_SERVERS,
-        group_id=GROUP_ID,
-        auto_offset_reset="earliest",
-        enable_auto_commit=True,
-        value_deserializer=lambda b: json.loads(b.decode("utf-8")),
-        key_deserializer=lambda b: b.decode("utf-8") if b else None,
-    )
+    try:
+        consumer = KafkaConsumer(
+            TOPIC_ORDERS,
+            bootstrap_servers=BOOTSTRAP_SERVERS,
+            api_version=KAFKA_API_VERSION,
+            group_id=GROUP_ID,
+            auto_offset_reset="earliest",
+            enable_auto_commit=True,
+            value_deserializer=lambda b: json.loads(b.decode("utf-8")),
+            key_deserializer=lambda b: b.decode("utf-8") if b else None,
+        )
+    except NoBrokersAvailable:
+        print("ERROR: Kafka broker is not reachable at localhost:9092.")
+        print("Start/verify the stack: docker compose up -d ; docker compose ps")
+        sys.exit(2)
+
     try:
         for msg in consumer:
             print(

@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from kafka import KafkaProducer
 
-from config import BOOTSTRAP_SERVERS, TOPIC_HELLO
+from config import BOOTSTRAP_SERVERS, KAFKA_API_VERSION, TOPIC_HELLO
 
 MESSAGE_KEY = "demo-key"  # Same key on every send -> same partition -> strict order for this key.
 
@@ -35,6 +35,7 @@ def main() -> None:
 
     producer = KafkaProducer(
         bootstrap_servers=BOOTSTRAP_SERVERS,
+        api_version=KAFKA_API_VERSION,
         value_serializer=lambda v: json.dumps(v).encode("utf-8"),
         key_serializer=lambda k: k.encode("utf-8") if k is not None else None,
     )
@@ -46,7 +47,7 @@ def main() -> None:
             print(
                 f"[{i}] APPENDED  topic={record_metadata.topic!r}  "
                 f"partition={record_metadata.partition}  "
-                f"offset={record_metadata.offset}  "
+                f"offset={record_metadata.offset}  "                
                 f"key={MESSAGE_KEY!r}"
             )
             time.sleep(0.3)
