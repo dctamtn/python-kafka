@@ -75,7 +75,31 @@ def main() -> None:
         bootstrap_servers=BOOTSTRAP_SERVERS,
         api_version=KAFKA_API_VERSION,
         partitioner=user_partitioner,
+        # Kafka only transports bytes. These two callbacks run inside send() to
+        # turn the Python objects we pass into bytes before anything hits the wire.
+        #
+        # `lambda` is plain Python syntax (a keyword), not something from Kafka.
+        # `lambda args: expression` builds a small anonymous function whose body
+        # is one expression and whose return value is that expression:
+        #   lambda v: json.dumps(v).encode("utf-8")
+        # is the same as
+        #   def value_serializer(v):
+        #       return json.dumps(v).encode("utf-8")
+        # It is used here because KafkaProducer wants a function to call later and
+        # the logic is one line, so a named def would be noise.
+        #
+        # value_serializer: dict -> JSON string -> UTF-8 bytes
+        #   {"order_id": 0, "user": "user-0", "amount_cents": 100}
+        #   -> b'{"order_id": 0, "user": "user-0", "amount_cents": 100}'
+        # The consumer reverses it with value_deserializer=lambda b: json.loads(b.decode("utf-8")).
         value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+        # key_serializer: str -> UTF-8 bytes, None stays None (keyless record)
+        #   "user-3" -> b"user-3"      None -> None
+        # `A if cond else B` is Python's conditional expression (ternary). The None
+        # guard is needed because None.encode() would raise AttributeError, and a
+        # None key is legal in Kafka (it means "no key").
+        # Runs BEFORE the partitioner, which is why user_partitioner receives bytes.
+        # The consumer reverses it with key_deserializer=lambda b: b.decode("utf-8") if b else None.
         key_serializer=lambda k: k.encode("utf-8") if k is not None else None,
     )
     try:
