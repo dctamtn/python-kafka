@@ -50,7 +50,7 @@ Wait until services are up (first image pull can take a few minutes).
 docker compose ps
 ```
 
-Auto-created topics use **4 partitions** (see `docker-compose.yml`) so the two-worker demo can split work. For a completely clean broker state:
+Auto-created topics use **8 partitions** (see `docker-compose.yml`) so the multi-worker demo can feed up to 8 consumers. For a completely clean broker state:
 
 ```powershell
 docker compose down -v
@@ -99,9 +99,11 @@ READ  partition=2  offset=0  key='demo-key'  value={'seq': 0, 'message': '...'}
 - Run the producer again without restarting the consumer: you only see **new** messages. The group `learning-group-hello` already committed offsets.
 - To read from the beginning again: change `group_id` in `02_consumer.py` (e.g. `learning-group-hello-v2`) or wipe volumes with `docker compose down -v`.
 
-### Step 4 — Two consumers, one group (load balancing)
+### Step 4 — Several consumers, one group (load balancing)
 
-**Goal:** Two processes share work because they share `group_id`; each partition is read by **at most one** consumer in the group.
+**Goal:** Multiple processes share work because they share `group_id`; each partition is read by **at most one** consumer in the group.
+
+Start as many workers as you like — 2, 3, 4 or more — each in its own terminal, **before** the producer:
 
 **Terminal A:**
 
@@ -115,7 +117,13 @@ python samples\03_consumer_two_workers.py worker-a
 python samples\03_consumer_two_workers.py worker-b
 ```
 
-**Terminal C:**
+**Terminal C (optional, add more the same way):**
+
+```powershell
+python samples\03_consumer_two_workers.py worker-c
+```
+
+**Last terminal — producer:**
 
 ```powershell
 python samples\03_producer_many_keys.py
@@ -123,10 +131,41 @@ python samples\03_producer_many_keys.py
 
 **What to notice**
 
-- Each line is handled by **either** `worker-a` or `worker-b`, not both (same group).
+- Each line is handled by **exactly one** worker, never two (same group).
 - Messages with the same **key** always show the same **partition** (check producer output).
-- With 4 partitions and 2 consumers, work is split across workers (exact assignment can vary after rebalance).
+- The producer sends one key per partition (`user-0` → partition 0, `user-1` → partition 1, …), so **every** partition receives messages and every worker (up to the partition count) gets some.
+- With 8 partitions and 3 workers, workers get 3/3/2 partitions; with 4 workers, 2 each (exact assignment can vary after rebalance).
 - If you only run **one** worker, it consumes **all** partitions alone.
+- Workers beyond the partition count (9th worker with 8 partitions) stay **idle** — a partition cannot be split between consumers.
+
+#### Why did only two workers receive messages before?
+
+Kafka assigns **partitions** to consumers, not individual keys or messages. A
+consumer only prints a message when one of its assigned partitions receives one.
+
+The default partitioner hashes the key (murmur2). The earlier version of the
+producer used only four keys (`user-0` … `user-3`) on a 4-partition topic, and
+those four keys happen to hash to just **two** partitions (`3, 0, 0, 3`). The two
+workers that owned partitions 0 and 3 printed everything; the others were healthy
+group members with nothing to read.
+
+`03_producer_many_keys.py` now uses a small custom partitioner that maps
+`user-i` → partition `i`, and sends one key per partition, so all partitions
+(and therefore all workers) are busy. Production code normally keeps the default
+partitioner and relies on many distinct keys instead.
+
+Check the producer's `key -> partition` output and compare the partition
+numbers with the worker logs. To check how many partitions the topic actually
+has, run:
+
+```powershell
+docker compose exec kafka kafka-topics --bootstrap-server localhost:9092 --describe --topic orders-demo
+```
+
+If it shows fewer than 8 partitions, the topic was created by an older
+`docker-compose.yml`; run `docker compose down -v` and `docker compose up -d`.
+Increasing the number of workers does not create partitions or split a
+partition among consumers.
 
 ### Stop Kafka
 
@@ -147,9 +186,9 @@ docker compose down -v
 | `config.py` | Bootstrap `localhost:9092` and topic names. |
 | `samples/01_producer.py` | Basic produce; fixed key → one partition. |
 | `samples/02_consumer.py` | Subscribe, `group_id`, `auto_offset_reset=earliest`. |
-| `samples/03_producer_many_keys.py` | Many keys → spread across partitions. |
-| `samples/03_consumer_two_workers.py` | Same group, two processes, shared load. |
-| `docker-compose.yml` | ZooKeeper + broker; `KAFKA_NUM_PARTITIONS: 4` for demos. |
+| `samples/03_producer_many_keys.py` | One key per partition (custom partitioner) → every partition gets work. |
+| `samples/03_consumer_two_workers.py` | Same group, N processes, shared load. |
+| `docker-compose.yml` | ZooKeeper + broker; `KAFKA_NUM_PARTITIONS: 8` for demos. |
 
 ### Troubleshooting
 
@@ -159,6 +198,7 @@ docker compose down -v
 | Consumer shows nothing | Start consumer **before** producer; check topic name in `config.py`. |
 | Producer errors on send | Broker not ready; retry after `docker compose ps` shows healthy containers. |
 | Step 4: only one worker busy | Topic may have been created with 1 partition earlier — run `docker compose down -v` and `up -d` again. |
+| Step 4: only some workers busy | Describe `orders-demo`: if it has fewer partitions than workers (e.g. 4 from an older compose file), run `docker compose down -v` and `up -d`. Workers beyond the partition count are always idle. |
 | Want to re-read all messages | New `group_id` in the consumer, or `docker compose down -v`. |
 
 For inspecting topics, messages, and consumer lag: [kafka-debugging-tools.md](kafka-debugging-tools.md).
@@ -381,7 +421,7 @@ flowchart TB
 | Input | Typical result in this lab |
 |-------|----------------------------|
 | Key `demo-key` on every send (`01_producer.py`) | **All 5 records → one partition** → offsets 0, 1, 2, 3, 4 on that partition |
-| Keys `user-0` … `user-3` (`03_producer_many_keys.py`) | **Up to 4 partitions used** — each user id sticks to one partition |
+| Keys `user-0` … `user-7` (`03_producer_many_keys.py`, custom partitioner `user-i` → partition `i`) | **All 8 partitions used** — each user id sticks to one partition |
 | No key | Records spread across partitions; **no** ordering guarantee by business id |
 
 **Formula (default partitioner):** same key → same hash → same partition **as long as the topic’s partition count does not change**. If you add partitions later, key-to-partition mapping can shift for new messages (important in production).
@@ -391,12 +431,12 @@ flowchart TB
 Kafka guarantees **strict order only inside one partition**, not across the whole topic.
 
 ```text
-Topic orders-demo (4 partitions)
+Topic orders-demo (8 partitions)
 
 partition 0:  user-0@offset0 → user-0@offset1 → user-0@offset2   ✓ ordered for user-0
 partition 1:  user-1@offset0 → user-1@offset1                     ✓ ordered for user-1
 partition 2:  ...
-partition 3:  ...
+partition 7:  ...
 
 Across partitions: user-0 and user-1 events can interleave in “wall clock” time — that is normal.
 ```
@@ -412,15 +452,18 @@ Across partitions: user-0 and user-1 events can interleave in “wall clock” t
 producer.send(TOPIC_HELLO, key="demo-key", value=payload)
 ```
 
-**Sample 3** — many keys on purpose:
+**Sample 3** — one key per partition on purpose:
 
 ```python
 # samples/03_producer_many_keys.py
-user_id = f"user-{i % 4}"   # user-0, user-1, user-2, user-3
-producer.send(TOPIC_ORDERS, key=user_id, value=payload)
+num_partitions = len(producer.partitions_for(TOPIC_ORDERS))   # 8 by default
+user_id = f"user-{i % num_partitions}"                        # user-0 .. user-7
+producer.send(TOPIC_ORDERS, key=user_id, value=payload)       # custom partitioner: user-i -> partition i
 ```
 
-At the end, the producer prints a **key → partition** map. Each `user-*` should map to **exactly one** partition.
+At the end, the producer prints a **key → partition** map. Each `user-*` maps to **exactly one** partition, and every partition gets a key.
+
+Note the sample overrides the default (murmur2 hash) partitioner. With few keys the hash often sends several keys to the same partition and leaves others empty — e.g. `user-0..user-3` on 4 partitions hash to `3, 0, 0, 3`. That is normal Kafka behaviour, but it hides the load-balancing effect in a demo.
 
 ### Common mistakes
 
@@ -480,7 +523,7 @@ flowchart TB
   P3 --> A1
 ```
 
-- **Group A** (`03_consumer_two_workers.py`): two workers **split** partitions — each message is handled by **one** worker.
+- **Group A** (`03_consumer_two_workers.py`): N workers **split** partitions — each message is handled by **one** worker.
 - **Group B** (hypothetical second app with a **different** `group_id`): reads the **same** topic independently, with its **own** offsets — classic **fan-out**.
 
 ### Load balancing vs fan-out
@@ -502,14 +545,16 @@ flowchart LR
 
 | Situation | What happens |
 |-----------|----------------|
-| 2 consumers, 4 partitions | Each consumer gets ~2 partitions (exact split depends on assignor) |
-| 4 consumers, 4 partitions | Ideally 1 partition each |
-| 5 consumers, 4 partitions | **1 consumer idle** — cannot split a partition across two consumers |
-| 1 consumer, 4 partitions | That consumer reads **all** partitions alone |
+| 2 consumers, 8 partitions | Each consumer gets 4 partitions (exact split depends on assignor) |
+| 3 consumers, 8 partitions | 3 / 3 / 2 partitions |
+| 4 consumers, 8 partitions | 2 partitions each |
+| 8 consumers, 8 partitions | Ideally 1 partition each |
+| 9 consumers, 8 partitions | **1 consumer idle** — cannot split a partition across two consumers |
+| 1 consumer, 8 partitions | That consumer reads **all** partitions alone |
 | New worker joins | **Rebalance** — partitions may move to the new member; brief pause possible |
 | Worker crashes / Ctrl+C | Rebalance — its partitions reassigned to survivors |
 
-In this repo, both `worker-a` and `worker-b` use `group_id="learning-group-orders"` in `03_consumer_two_workers.py`.
+In this repo, every worker (`worker-a`, `worker-b`, `worker-c`, …) uses `group_id="learning-group-orders"` in `03_consumer_two_workers.py`.
 
 ### Offsets are per group (not per consumer)
 
@@ -559,7 +604,7 @@ During rebalance, consumption pauses briefly. For the lab, start **both** worker
 | Lab step | Group | Key behavior |
 |----------|-------|----------------|
 | Step 3 (`01` + `02`) | One consumer, `learning-group-hello` | Same key `demo-key` → one partition; one consumer reads it |
-| Step 4 (`03_*`) | Two consumers, `learning-group-orders` | Four keys → up to four partitions; two workers split those partitions |
+| Step 4 (`03_*`) | N consumers, `learning-group-orders` | One key per partition (8) → every partition has work; workers split those partitions |
 
 **Exercise:** Run Step 4 with only `worker-a`. Then add `worker-b` and send again with a **new** `group_id` (or `docker compose down -v`) — watch how the second worker takes partitions on rebalance.
 
@@ -658,7 +703,29 @@ Kafka fits **event streams** that many services read, **high throughput**, **buf
 | **At-least-once** | Retry on failure; consumer may **reprocess** (duplicates) unless idempotent. | Common default. |
 | **Exactly-once** | Transactions / idempotent producer + careful read-process-write. | Complexity, overhead; be honest about what “EOS” covers in your stack. |
 
-Pair semantics with **idempotent consumers** (dedupe key, natural keys, outbox pattern).
+#### Idempotent consumers
+
+An **idempotent consumer** can process the same event more than once and still
+leave the system in the same final state as processing it once. This matters
+with at-least-once delivery: for example, a consumer can finish an update but
+fail before its Kafka offset is committed, so Kafka may deliver that event
+again after a restart or rebalance.
+
+- **Idempotent operation:** set order `123` to `SHIPPED`. Repeating the update
+  leaves it `SHIPPED`.
+- **Not idempotent by itself:** subtract `$10` from an account balance. Repeating
+  the operation subtracts `$10` again.
+
+A common solution is to give each event a stable unique ID and persist which
+IDs have been processed. On delivery, skip an ID already recorded. The
+deduplication record and the business update should be committed atomically
+(for example, in one database transaction); otherwise a crash between those
+steps can still cause a duplicate effect or incorrectly suppress an update.
+Natural keys or idempotent upserts can also make repeated updates safe.
+
+This protects the consumer's **side effects** from duplicate processing; it
+does not mean Kafka delivers each record only once, nor is it the same feature
+as an idempotent producer.
 
 ### Operational topics (mid/senior)
 

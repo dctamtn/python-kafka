@@ -24,5 +24,7 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-      # New auto-created topics get 4 partitions so the two-consumer demo can split work.
-      KAFKA_NUM_PARTITIONS: 4
+      # New auto-created topics get 8 partitions so the multi-worker demo (Step 4)
+      # can feed up to 8 consumers in one group. Changing this only affects topics
+      # created afterwards: run `docker compose down -v` to recreate existing ones.
+      KAFKA_NUM_PARTITIONS: 8

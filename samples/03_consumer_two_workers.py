@@ -1,15 +1,17 @@
 """
-Sample 3b — Two consumers, one consumer group (load balancing)
+Sample 3b — Several consumers, one consumer group (load balancing)
 
-Both processes use group_id='learning-group-orders'. Kafka assigns each partition
-to at most one consumer in the group, so work is shared.
+Every process uses group_id='learning-group-orders'. Kafka assigns each partition
+to at most one consumer in the group, so work is shared. Start as many workers as
+you like (up to the topic's partition count, 8 by default); extra workers stay idle.
 
 How to run:
   Terminal A: python samples/03_consumer_two_workers.py worker-a
   Terminal B: python samples/03_consumer_two_workers.py worker-b
-  Terminal C: python samples/03_producer_many_keys.py
+  Terminal C: python samples/03_consumer_two_workers.py worker-c   (optional, more if you like)
+  Last:       python samples/03_producer_many_keys.py
 
-Pass a label (worker-a / worker-b) so you can tell which terminal handled each message.
+Pass a label (worker-a / worker-b / ...) so you can tell which terminal handled each message.
 """
 
 from __future__ import annotations
@@ -40,7 +42,7 @@ def main() -> None:
     print(f"Group:        {GROUP_ID!r}")
     print(
         "This process competes with other consumers in the SAME group for partitions.\n"
-        "Waiting for messages ... run samples/03_producer_many_keys.py when both workers are up.\n"
+        "Waiting for messages ... run samples/03_producer_many_keys.py when all workers are up.\n"
     )
 
     try:
